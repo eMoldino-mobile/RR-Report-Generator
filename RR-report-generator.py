@@ -109,7 +109,8 @@ class RunRateCalculator:
 # --- Excel Generation Function ---
 def generate_excel_report(all_runs_data):
     output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    # Added nan_inf_to_errors to prevent corruption from invalid numbers
+    with pd.ExcelWriter(output, engine='xlsxwriter', options={'nan_inf_to_errors': True}) as writer:
         workbook = writer.book
         
         # --- Define Formats ---
@@ -121,11 +122,14 @@ def generate_excel_report(all_runs_data):
         time_format = workbook.add_format({'num_format': 'd "d" h "h" m "m" s "s"', 'border': 1})
         mins_format = workbook.add_format({'num_format': '0.00 "min"', 'border': 1})
         secs_format = workbook.add_format({'num_format': '0.00 "sec"', 'border': 1})
+        # --- FIX: Added a specific datetime format ---
+        datetime_format = workbook.add_format({'num_format': 'yyyy-mm-dd hh:mm:ss', 'border': 1})
+
 
         # --- Generate a Sheet for Each Run ---
         for run_id, data in all_runs_data.items():
             ws = workbook.add_worksheet(f"Run_{run_id:03d}")
-            df_run = data['processed_df']
+            df_run = data['processed_df'].copy() # Use a copy to avoid modifying original
             
             # --- Layout inspired by screenshots ---
             
@@ -194,11 +198,25 @@ def generate_excel_report(all_runs_data):
             
             # Raw Data Table
             ws.write_row('A18', df_run.columns, header_format)
+            
+            # --- FIX: Set column formats and widths BEFORE writing data ---
+            for i, col_name in enumerate(df_run.columns):
+                width = max(len(str(col_name)), df_run[col_name].astype(str).map(len).max())
+                final_width = width + 2 if width < 40 else 40
+                
+                if col_name == 'SHOT TIME':
+                    ws.set_column(i, i, final_width, datetime_format)
+                else:
+                    ws.set_column(i, i, final_width)
+
             start_row = 19
             # Convert datetime to timezone-unaware for ExcelWriter compatibility
             if 'SHOT TIME' in df_run.columns and pd.api.types.is_datetime64_any_dtype(df_run['SHOT TIME']):
                 df_run['SHOT TIME'] = df_run['SHOT TIME'].dt.tz_localize(None)
                 
+            # Fill NaN values to prevent potential issues
+            df_run.fillna('', inplace=True)
+
             for i, row in enumerate(df_run.to_numpy()):
                 current_row_num = start_row + i
                 ws.write_row(f'A{current_row_num}', row)
@@ -215,8 +233,7 @@ def generate_excel_report(all_runs_data):
                 bucket_col = chr(ord('A') + df_run.columns.get_loc('TIME BUCKET'))
             except KeyError:
                 # If a column for formulas is missing, we can't add them.
-                # This might happen with very minimal data files.
-                st.warning("Could not add all formulas to Excel due to missing columns in source file.")
+                st.warning(f"Could not add all formulas to Excel sheet '{ws.name}' due to missing columns in source file.")
                 continue # Skip to next run sheet
 
             for i in range(len(df_run)):
@@ -227,20 +244,16 @@ def generate_excel_report(all_runs_data):
                 else:
                     ws.write_formula(f'{time_diff_col}{row_num}', f'=({shot_time_col}{row_num}-{shot_time_col}{row_num-1})*86400', data_format)
                 
-                # CUMULATIVE COUNT
-                ws.write_formula(f'{cum_count_col}{row_num}', f'"=COUNTIF(${stop_col}$19:${stop_col}{row_num},1) & \"/\" & TEXT(SUM(${time_diff_col}$19:${time_diff_col}{row_num})*0.000011574, \"[h]:mm:ss\")"', data_format)
+                # CUMULATIVE COUNT (FIXED FORMULA)
+                formula = f'=COUNTIF(${stop_col}$19:${stop_col}{row_num},1) & "/" & TEXT(SUM(${time_diff_col}$19:${time_diff_col}{row_num})/86400, "[h]:mm:ss")'
+                ws.write_formula(f'{cum_count_col}{row_num}', formula, data_format)
 
                 # RUN DURATION
-                ws.write_formula(f'{run_dur_col}{row_num}', f'=SUM(${time_diff_col}$19:${time_diff_col}{row_num})*0.000011574', time_format) # 1/86400
+                ws.write_formula(f'{run_dur_col}{row_num}', f'=SUM(${time_diff_col}$19:${time_diff_col}{row_num})/86400', time_format) # Convert seconds to excel day fraction
 
                 # TIME BUCKET
                 ws.write_formula(f'{bucket_col}{row_num}', f'=IFERROR(FLOOR({run_dur_col}{row_num}*1440/20,1)+1, "")', data_format)
 
-            # Adjust column widths for better readability
-            for i, col in enumerate(df_run.columns):
-                width = max(len(str(col)), df_run[col].astype(str).map(len).max())
-                ws.set_column(i, i, width + 2 if width < 30 else 30)
-    
     return output.getvalue()
 
 # --- Streamlit App UI ---
@@ -334,3 +347,4 @@ if uploaded_file:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True
                     )
+
