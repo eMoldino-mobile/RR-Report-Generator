@@ -201,6 +201,10 @@ def generate_excel_report(all_runs_data):
             df_run.fillna('', inplace=True)
             
             try:
+                # Hide the run_group column before proceeding
+                run_group_col_index = df_run.columns.get_loc('run_group')
+                ws.set_column(run_group_col_index, run_group_col_index, None, None, {'hidden': True})
+                
                 time_diff_col = chr(ord('A') + df_run.columns.get_loc('TIME DIFF SEC'))
                 stop_col = chr(ord('A') + df_run.columns.get_loc('STOP'))
                 stop_event_col = chr(ord('A') + df_run.columns.get_loc('STOP EVENT'))
@@ -230,7 +234,7 @@ def generate_excel_report(all_runs_data):
                 if i == 0:
                     helper_formula = f'={time_diff_col}{row_num}'
                 else:
-                    helper_formula = f'=IF({stop_event_col}{row_num - 1}=1, {time_diff_col}{row_num}, {helper_col}{row_num - 1} + {time_diff_col}{row_num})'
+                    helper_formula = f'=IF({stop_event_col}{row_num}=1, {time_diff_col}{row_num}, {helper_col}{row_num - 1} + {time_diff_col}{row_num})'
                 ws.write_formula(f'{helper_col}{row_num}', helper_formula)
 
                 cum_count_formula = f'=COUNTIF(${stop_event_col}$19:${stop_event_col}{row_num},1) & "/" & IF({stop_event_col}{row_num}=1, "0 sec", TEXT({helper_col}{row_num}/86400, "[h]:mm:ss"))'
@@ -279,9 +283,11 @@ if uploaded_file:
                     df_processed['run_id'] = is_new_run.cumsum()
 
                     all_runs_data = {}
+                    # --- FIX: Added 'run_group' to keep it for color mapping ---
                     desired_columns = [
                         'SUPPLIER NAME', 'tool_id', 'SESSION ID', 'SHOT ID', 'shot_time',
                         'APPROVED CT', 'ACTUAL CT', 'CT MIN', 'ct_diff_sec', 'stop_flag', 'stop_event',
+                        'run_group', 
                         'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET'
                     ]
 
