@@ -189,14 +189,15 @@ def generate_excel_report(all_runs_data, tolerance):
                 df_run['SHOT TIME'] = pd.to_datetime(df_run['SHOT TIME']).dt.tz_localize(None)
             df_run.fillna('', inplace=True)
             
-            # Write static data first (values that don't need formulas)
+            # Write static data first, converting bools to int
             for i, row in enumerate(df_run.to_numpy()):
                 for c_idx, value in enumerate(row):
-                    # Skip columns that will get a formula
                     if df_run.columns[c_idx] in ['TIME DIFF SEC', 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
                         continue
                     if isinstance(value, pd.Timestamp):
                         ws.write_datetime(start_row + i -1, c_idx, value, datetime_format)
+                    elif isinstance(value, bool):
+                        ws.write_number(start_row + i -1, c_idx, int(value), data_format)
                     else:
                         ws.write(start_row + i -1, c_idx, value, data_format)
             
@@ -235,7 +236,7 @@ def generate_excel_report(all_runs_data, tolerance):
                 if i == 0:
                     helper_formula = f'={time_diff_col}{row_num}'
                 else:
-                    helper_formula = f'=IF({stop_event_col}{row_num}=1, 0, {helper_col}{row_num - 1}) + {time_diff_col}{row_num}'
+                    helper_formula = f'=IF({stop_event_col}{row_num}=1, {time_diff_col}{row_num}, {helper_col}{row_num - 1} + {time_diff_col}{row_num})'
                 ws.write_formula(f'{helper_col}{row_num}', helper_formula)
 
                 # CUMULATIVE COUNT
