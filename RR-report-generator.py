@@ -135,14 +135,12 @@ def generate_excel_report(all_runs_data, tolerance):
             ws.write('A3', 'Method', label_format)
             ws.write('B3', 'Every Shot')
 
-            # --- Summary with Mode CT ---
             ws.write('E1', 'Mode CT', sub_header_format)
             ws.write('E2', data['mode_ct'], secs_format)
 
             ws.write('F1', 'Outside L1', sub_header_format); ws.write('G1', 'Outside L2', sub_header_format); ws.write('H1', 'IDLE', sub_header_format)
             ws.write('F2', 'Lower Limit', label_format); ws.write('G2', 'Upper Limit', label_format); ws.write('H2', 'Stops', label_format)
             
-            # Link Lower/Upper limits to Mode CT cell
             ws.write_formula('F3', f'=E2*(1-{tolerance})', secs_format)
             ws.write_formula('G3', f'=E2*(1+{tolerance})', secs_format)
             ws.write_formula('H3', f"=SUM(J:J)", sub_header_format)
@@ -153,7 +151,7 @@ def generate_excel_report(all_runs_data, tolerance):
             
             ws.write('K4', 'Efficiency', label_format); ws.write('L4', 'Stop Events', label_format)
             ws.write_formula('K5', f"=L2/K2", percent_format)
-            ws.write('L5', data['stop_events'], sub_header_format)
+            ws.write_formula('L5', f"=SUM(K:K)", sub_header_format) # Count stop events from column
 
             ws.write('F5', 'Tot Run Time', label_format); ws.write('G5', 'Tot Down Time', label_format)
             ws.write('F6', data['production_run_sec'] / 86400, time_format)
@@ -166,13 +164,12 @@ def generate_excel_report(all_runs_data, tolerance):
             ws.write('K11', 'Time to First DT', label_format); ws.write('L11', data['time_to_first_dt_min'], mins_format)
             ws.write('K12', 'Avg Cycle Time', label_format); ws.write('L12', data['avg_cycle_time_sec'], secs_format)
 
-            # --- Time Bucket Analysis Table (Moved & Updated) ---
             ws.merge_range('P14:R14', 'Time Bucket Analysis', header_format)
             ws.write('P15', 'Bucket', sub_header_format)
             ws.write('Q15', 'Duration Range', sub_header_format)
             ws.write('R15', 'Events Count', sub_header_format)
             
-            max_bucket = 20 # Show up to 20 buckets
+            max_bucket = 20
             for i in range(1, max_bucket + 1):
                 ws.write(f'P{15+i}', i, sub_header_format)
                 ws.write(f'Q{15+i}', f"{(i-1)*20} - {i*20} min", sub_header_format)
@@ -189,17 +186,14 @@ def generate_excel_report(all_runs_data, tolerance):
                 df_run['SHOT TIME'] = pd.to_datetime(df_run['SHOT TIME']).dt.tz_localize(None)
             df_run.fillna('', inplace=True)
             
-            # Write static data first, converting bools to int
+            # Write only the non-formula data
             for i, row in enumerate(df_run.to_numpy()):
                 for c_idx, value in enumerate(row):
-                    if df_run.columns[c_idx] in ['TIME DIFF SEC', 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
-                        continue
-                    if isinstance(value, pd.Timestamp):
-                        ws.write_datetime(start_row + i -1, c_idx, value, datetime_format)
-                    elif isinstance(value, bool):
-                        ws.write_number(start_row + i -1, c_idx, int(value), data_format)
-                    else:
-                        ws.write(start_row + i -1, c_idx, value, data_format)
+                    if df_run.columns[c_idx] not in ['TIME DIFF SEC', 'STOP', 'STOP EVENT', 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
+                        if isinstance(value, pd.Timestamp):
+                            ws.write_datetime(start_row + i - 1, c_idx, value, datetime_format)
+                        else:
+                             ws.write(start_row + i - 1, c_idx, value, data_format)
             
             try:
                 shot_time_col = chr(ord('A') + df_run.columns.get_loc('SHOT TIME'))
@@ -214,29 +208,38 @@ def generate_excel_report(all_runs_data, tolerance):
                 st.error("A required column for formula generation is missing. Report will be incomplete.")
                 continue
 
-            helper_col = 'P' # Use a column far to the right for helper calculations
+            helper_col = 'P'
             ws.set_column(f'{helper_col}:{helper_col}', None, None, {'hidden': True})
 
             for i in range(len(df_run)):
                 row_num = start_row + i
+                prev_row = row_num - 1
                 
-                # --- Overwrite specific cells with formulas ---
                 # TIME DIFF SEC FORMULA
                 if i > 0:
-                    prev_row = row_num - 1
                     time_diff_formula = f'({shot_time_col}{row_num}-{shot_time_col}{prev_row})*86400'
-                    stop_condition_formula = f'OR({actual_ct_col}{prev_row}=999.9, {time_diff_formula}>({actual_ct_col}{prev_row}+2))'
-                    
-                    final_formula = f'=IF({stop_condition_formula}, {time_diff_formula}, {actual_ct_col}{row_num})'
+                    stop_condition = f'OR({actual_ct_col}{prev_row}=999.9, {time_diff_formula}>({actual_ct_col}{prev_row}+2))'
+                    final_formula = f'=IF({stop_condition}, {time_diff_formula}, {actual_ct_col}{row_num})'
                     ws.write_formula(f'{time_diff_col}{row_num}', final_formula, data_format)
-                else: # First row case
+                else:
                     ws.write_formula(f'{time_diff_col}{row_num}', f'={actual_ct_col}{row_num}', data_format)
+                
+                # STOP FORMULA
+                stop_formula = f'=IF(AND({time_diff_col}{row_num}<=28800, OR({time_diff_col}{row_num}<$F$3, {time_diff_col}{row_num}>$G$3)), 1, 0)'
+                ws.write_formula(f'{stop_col}{row_num}', stop_formula, data_format)
 
-                # Helper column for resetting run duration sum
+                # STOP EVENT FORMULA
+                if i > 0:
+                    stop_event_formula = f'=IF(AND({stop_col}{row_num}=1, {stop_col}{prev_row}=0), 1, 0)'
+                else:
+                    stop_event_formula = f'=IF({stop_col}{row_num}=1, 1, 0)'
+                ws.write_formula(f'{stop_event_col}{row_num}', stop_event_formula, data_format)
+                
+                # Helper column for run duration sum
                 if i == 0:
                     helper_formula = f'={time_diff_col}{row_num}'
                 else:
-                    helper_formula = f'=IF({stop_event_col}{row_num}=1, {time_diff_col}{row_num}, {helper_col}{row_num - 1} + {time_diff_col}{row_num})'
+                    helper_formula = f'=IF({stop_event_col}{row_num}=1, {time_diff_col}{row_num}, {helper_col}{prev_row} + {time_diff_col}{row_num})'
                 ws.write_formula(f'{helper_col}{row_num}', helper_formula)
 
                 # CUMULATIVE COUNT
@@ -244,12 +247,14 @@ def generate_excel_report(all_runs_data, tolerance):
                 ws.write_formula(f'{cum_count_col}{row_num}', cum_count_formula, data_format)
 
                 # RUN DURATION
-                run_dur_formula = f'=IF({stop_event_col}{row_num}=1, {helper_col}{row_num-1}/86400, "")'
-                ws.write_formula(f'{run_dur_col}{row_num}', run_dur_formula, time_format)
+                if i > 0:
+                    run_dur_formula = f'=IF({stop_event_col}{row_num}=1, {helper_col}{prev_row}/86400, "")'
+                    ws.write_formula(f'{run_dur_col}{row_num}', run_dur_formula, time_format)
 
                 # TIME BUCKET
-                time_bucket_formula = f'=IF({stop_event_col}{row_num}=1, IFERROR(FLOOR({helper_col}{row_num-1}/60/20, 1) + 1, ""), "")'
-                ws.write_formula(f'{bucket_col}{row_num}', time_bucket_formula, data_format)
+                if i > 0:
+                    time_bucket_formula = f'=IF({stop_event_col}{row_num}=1, IFERROR(FLOOR({helper_col}{prev_row}/60/20, 1) + 1, ""), "")'
+                    ws.write_formula(f'{bucket_col}{row_num}', time_bucket_formula, data_format)
 
             for i, col_name in enumerate(df_run.columns):
                 width = max(len(str(col_name)), df_run[col_name].astype(str).map(len).max())
