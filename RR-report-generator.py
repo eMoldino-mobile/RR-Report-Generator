@@ -185,18 +185,16 @@ def generate_excel_report(all_runs_data, tolerance):
                 df_run['SHOT TIME'] = pd.to_datetime(df_run['SHOT TIME']).dt.tz_localize(None)
             df_run.fillna('', inplace=True)
             
-            # Write only the raw data columns, leave formula columns blank
+            # Write only the pre-calculated and raw data. Leave formula columns blank.
             for i, row in enumerate(df_run.to_numpy()):
                 for c_idx, value in enumerate(row):
-                    if df_run.columns[c_idx] not in ['TIME DIFF SEC', 'STOP', 'STOP EVENT', 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
+                    if df_run.columns[c_idx] not in ['STOP', 'STOP EVENT', 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
                         if isinstance(value, pd.Timestamp):
                             ws.write_datetime(start_row + i - 1, c_idx, value, datetime_format)
                         else:
                              ws.write(start_row + i - 1, c_idx, value, data_format)
             
             try:
-                shot_time_col = chr(ord('A') + df_run.columns.get_loc('SHOT TIME'))
-                actual_ct_col = chr(ord('A') + df_run.columns.get_loc('ACTUAL CT'))
                 time_diff_col = chr(ord('A') + df_run.columns.get_loc('TIME DIFF SEC'))
                 stop_col = chr(ord('A') + df_run.columns.get_loc('STOP'))
                 stop_event_col = chr(ord('A') + df_run.columns.get_loc('STOP EVENT'))
@@ -214,16 +212,7 @@ def generate_excel_report(all_runs_data, tolerance):
                 row_num = start_row + i
                 prev_row = row_num - 1
                 
-                # --- Overwrite specific cells with formulas ---
-                # TIME DIFF SEC FORMULA
-                if i > 0:
-                    time_diff_formula = f'({shot_time_col}{row_num}-{shot_time_col}{prev_row})*86400'
-                    stop_condition = f'OR({actual_ct_col}{prev_row}=999.9, {time_diff_formula}>({actual_ct_col}{prev_row}+2))'
-                    final_formula = f'=IF({stop_condition}, {time_diff_formula}, {actual_ct_col}{row_num})'
-                    ws.write_formula(f'{time_diff_col}{row_num}', final_formula, data_format)
-                else:
-                    ws.write_formula(f'{time_diff_col}{row_num}', f'={actual_ct_col}{row_num}', data_format)
-                
+                # --- All Analytical Columns are now FORMULAS ---
                 # STOP FORMULA
                 stop_formula = f'=IF(AND({time_diff_col}{row_num}<=28800, OR({time_diff_col}{row_num}<$F$3, {time_diff_col}{row_num}>$G$3)), 1, 0)'
                 ws.write_formula(f'{stop_col}{row_num}', stop_formula, data_format)
@@ -309,7 +298,8 @@ if uploaded_file:
                         run_results['end_time'] = df_run['shot_time'].max()
 
                         export_df = run_results['processed_df'].copy()
-                        for col in ['TIME DIFF SEC', 'STOP', 'STOP EVENT', 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
+                        # Add placeholder columns for formulas
+                        for col in ['STOP', 'STOP EVENT', 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
                             export_df[col] = ''
                         
                         columns_to_export = [col for col in desired_columns if col in export_df.columns]
