@@ -32,15 +32,24 @@ class RunRateCalculator:
         df = df.dropna(subset=["shot_time"]).sort_values("shot_time").reset_index(drop=True)
         if df.empty: return pd.DataFrame()
 
+        # --- CORRECTED LOGIC ---
         if "ACTUAL CT" in df.columns:
             time_diff_sec = df["shot_time"].diff().dt.total_seconds()
             prev_actual_ct = df["ACTUAL CT"].shift(1)
             rounding_buffer = 2.0
-            use_timestamp_diff = (prev_actual_ct == 999.9) | (time_diff_sec > (prev_actual_ct + rounding_buffer))
-            df["ct_diff_sec"] = np.where(use_timestamp_diff, time_diff_sec, prev_actual_ct)
+            
+            # This condition identifies a stop. It checks if the time since the last shot
+            # is significantly longer than the last shot's recorded cycle time.
+            is_a_stop = (prev_actual_ct == 999.9) | (time_diff_sec > (prev_actual_ct + rounding_buffer))
+            
+            # The value for ct_diff_sec is the timestamp difference if it's a stop,
+            # otherwise it defaults to the ACTUAL CT for the CURRENT shot.
+            df["ct_diff_sec"] = np.where(is_a_stop, time_diff_sec, df["ACTUAL CT"])
         else:
+            # If no ACTUAL CT, the only option is to use the timestamp difference.
             df["ct_diff_sec"] = df["shot_time"].diff().dt.total_seconds()
 
+        # Handle the first row which will have a NaN diff.
         if not df.empty and pd.isna(df.loc[0, "ct_diff_sec"]):
             df.loc[0, "ct_diff_sec"] = df.loc[0, "ACTUAL CT"] if "ACTUAL CT" in df.columns else 0
         return df
@@ -109,7 +118,6 @@ class RunRateCalculator:
 # --- Excel Generation Function ---
 def generate_excel_report(all_runs_data):
     output = BytesIO()
-    # FIX: Removed the unsupported 'options' keyword argument
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         
@@ -235,23 +243,42 @@ def generate_excel_report(all_runs_data):
                 st.warning(f"Could not add all formulas to Excel sheet '{ws.name}' due to missing columns in source file.")
                 continue # Skip to next run sheet
 
+            # --- Helper column for resetting run duration (we will hide this later) ---
+            helper_col = 'O' # Assuming column O is free
+            ws.set_column(f'{helper_col}:{helper_col}', None, None, {'hidden': True})
+
+
             for i in range(len(df_run)):
                 row_num = 19 + i
-                # TIME DIFF SEC
+                # TIME DIFF SEC (no change)
                 if i == 0:
                     ws.write_formula(f'{time_diff_col}{row_num}', f'={actual_ct_col}{row_num}', data_format)
                 else:
                     ws.write_formula(f'{time_diff_col}{row_num}', f'=({shot_time_col}{row_num}-{shot_time_col}{row_num-1})*86400', data_format)
                 
-                # CUMULATIVE COUNT (FIXED FORMULA)
-                formula = f'=COUNTIF(${stop_col}$19:${stop_col}{row_num},1) & "/" & TEXT(SUM(${time_diff_col}$19:${time_diff_col}{row_num})/86400, "[h]:mm:ss")'
-                ws.write_formula(f'{cum_count_col}{row_num}', formula, data_format)
+                # --- NEW LOGIC USING A HELPER COLUMN FOR THE RESETTING SUM ---
+                # Helper column calculates the running duration of the stable run in seconds
+                if i == 0:
+                    helper_formula = f'={time_diff_col}{row_num}'
+                else:
+                    helper_formula = f'=IF({stop_col}{row_num - 1}=1, {time_diff_col}{row_num}, {helper_col}{row_num - 1} + {time_diff_col}{row_num})'
+                ws.write_formula(f'{helper_col}{row_num}', helper_formula)
+
+                # CUMULATIVE COUNT
+                cum_count_formula = (
+                    f'=COUNTIF(${stop_col}$19:${stop_col}{row_num},1) & "/" & '
+                    f'IF({stop_col}{row_num}=1, "0 sec", TEXT({helper_col}{row_num}/86400, "[h]:mm:ss"))'
+                )
+                ws.write_formula(f'{cum_count_col}{row_num}', cum_count_formula, data_format)
 
                 # RUN DURATION
-                ws.write_formula(f'{run_dur_col}{row_num}', f'=SUM(${time_diff_col}$19:${time_diff_col}{row_num})/86400', time_format) # Convert seconds to excel day fraction
+                run_dur_formula = f'=IF({stop_col}{row_num}=1, {helper_col}{row_num}/86400, "")'
+                ws.write_formula(f'{run_dur_col}{row_num}', run_dur_formula, time_format)
 
                 # TIME BUCKET
-                ws.write_formula(f'{bucket_col}{row_num}', f'=IFERROR(FLOOR({run_dur_col}{row_num}*1440/20,1)+1, "")', data_format)
+                time_bucket_formula = f'=IF({stop_col}{row_num}=1, IFERROR(FLOOR({helper_col}{row_num}/60/20, 1) + 1, ""), "")'
+                ws.write_formula(f'{bucket_col}{row_num}', time_bucket_formula, data_format)
+
 
     return output.getvalue()
 
