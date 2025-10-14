@@ -109,8 +109,8 @@ class RunRateCalculator:
 # --- Excel Generation Function ---
 def generate_excel_report(all_runs_data):
     output = BytesIO()
-    # Added nan_inf_to_errors to prevent corruption from invalid numbers
-    with pd.ExcelWriter(output, engine='xlsxwriter', options={'nan_inf_to_errors': True}) as writer:
+    # FIX: Removed the unsupported 'options' keyword argument
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         
         # --- Define Formats ---
@@ -122,7 +122,6 @@ def generate_excel_report(all_runs_data):
         time_format = workbook.add_format({'num_format': 'd "d" h "h" m "m" s "s"', 'border': 1})
         mins_format = workbook.add_format({'num_format': '0.00 "min"', 'border': 1})
         secs_format = workbook.add_format({'num_format': '0.00 "sec"', 'border': 1})
-        # --- FIX: Added a specific datetime format ---
         datetime_format = workbook.add_format({'num_format': 'yyyy-mm-dd hh:mm:ss', 'border': 1})
 
 
@@ -199,7 +198,7 @@ def generate_excel_report(all_runs_data):
             # Raw Data Table
             ws.write_row('A18', df_run.columns, header_format)
             
-            # --- FIX: Set column formats and widths BEFORE writing data ---
+            # Set column formats and widths BEFORE writing data
             for i, col_name in enumerate(df_run.columns):
                 width = max(len(str(col_name)), df_run[col_name].astype(str).map(len).max())
                 final_width = width + 2 if width < 40 else 40
