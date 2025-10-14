@@ -120,30 +120,8 @@ def generate_excel_report(all_runs_data):
         time_format = workbook.add_format({'num_format': '[h]:mm:ss', 'border': 1})
         mins_format = workbook.add_format({'num_format': '0.00 "min"', 'border': 1})
         secs_format = workbook.add_format({'num_format': '0.00 "sec"', 'border': 1})
-        
-        # Color formats based on duration
-        color_formats = {
-            'default': workbook.add_format({'border': 1}),
-            'datetime': workbook.add_format({'num_format': 'yyyy-mm-dd hh:mm:ss', 'border': 1}),
-            'red1': workbook.add_format({'bg_color': '#FFC7CE', 'border': 1}), # Pastel Red
-            'red2': workbook.add_format({'bg_color': '#F88379', 'border': 1}), # Coral Pink
-            'blue1': workbook.add_format({'bg_color': '#B9D9EB', 'border': 1}), # Light Blue
-            'blue2': workbook.add_format({'bg_color': '#87CEEB', 'border': 1}), # Sky Blue
-            'green1': workbook.add_format({'bg_color': '#C1E1C1', 'border': 1}),# Pastel Green
-            'green2': workbook.add_format({'bg_color': '#98FB98', 'border': 1}),# Pale Green
-        }
-        
-        def get_row_format(duration_min):
-            # --- FIX: Handle non-numeric types to prevent TypeError ---
-            if not isinstance(duration_min, (int, float)):
-                return color_formats['default']
-            if pd.isna(duration_min): return color_formats['default']
-            if duration_min < 40: return color_formats['red1']
-            if duration_min < 60: return color_formats['red2']
-            if duration_min < 100: return color_formats['blue1']
-            if duration_min < 160: return color_formats['blue2']
-            if duration_min < 180: return color_formats['green1']
-            return color_formats['green2']
+        data_format = workbook.add_format({'border': 1})
+        datetime_format = workbook.add_format({'num_format': 'yyyy-mm-dd hh:mm:ss', 'border': 1})
 
         # --- Generate a Sheet for Each Run ---
         for run_id, data in all_runs_data.items():
@@ -181,33 +159,41 @@ def generate_excel_report(all_runs_data):
             ws.write('K11', 'Time to First DT', label_format); ws.write('L11', data['time_to_first_dt_min'], mins_format)
             ws.write('K12', 'Avg Cycle Time', label_format); ws.write('L12', data['avg_cycle_time_sec'], secs_format)
 
-            ws.merge_range('P14:Q14', 'Time Bucket Analysis', header_format)
-            ws.write('P15', 'Time Bucket', sub_header_format); ws.write('Q15', 'Stop Events Count', sub_header_format)
+            # --- Time Bucket Analysis Table (Moved & Updated) ---
+            ws.merge_range('P14:R14', 'Time Bucket Analysis', header_format)
+            ws.write('P15', 'Bucket', sub_header_format)
+            ws.write('Q15', 'Duration Range', sub_header_format)
+            ws.write('R15', 'Events Count', sub_header_format)
             
-            bucket_counts = data['run_durations']['duration_min'].apply(lambda x: int(x // 20) + 1).value_counts().sort_index()
-            max_bucket = bucket_counts.index.max() if not bucket_counts.empty else 10
-            for i in range(1, max(11, max_bucket + 1)):
-                ws.write(f'P{15+i}', f"{(i-1)*20}-{i*20} min", sub_header_format)
-                ws.write(f'Q{15+i}', bucket_counts.get(i, 0), sub_header_format)
-            ws.write(f'P{16+max(10, max_bucket)}', 'Grand Total', sub_header_format)
-            ws.write_formula(f'Q{16+max(10, max_bucket)}', f"=SUM(Q16:Q{15+max(10, max_bucket)})", sub_header_format)
+            max_bucket = 20 # Show up to 20 buckets
+            for i in range(1, max_bucket + 1):
+                ws.write(f'P{15+i}', i, sub_header_format)
+                ws.write(f'Q{15+i}', f"{(i-1)*20} - {i*20} min", sub_header_format)
+                # Formula to count occurrences of this bucket number in the main table
+                ws.write_formula(f'R{15+i}', f'=COUNTIF(N:N,{i})', sub_header_format)
+            ws.write(f'Q{16+max_bucket}', 'Grand Total', sub_header_format)
+            ws.write_formula(f'R{16+max_bucket}', f"=SUM(R16:R{15+max_bucket})", sub_header_format)
+
 
             # --- Data Table ---
             ws.write_row('A18', df_run.columns, header_format)
             start_row = 19
             
-            run_duration_map = data['run_durations'].set_index('run_group')['duration_min']
-            df_run['total_run_duration'] = df_run['run_group'].map(run_duration_map)
-            
             if 'SHOT TIME' in df_run.columns:
                 df_run['SHOT TIME'] = pd.to_datetime(df_run['SHOT TIME']).dt.tz_localize(None)
             df_run.fillna('', inplace=True)
             
+            # Write static data first
+            for i, row in enumerate(df_run.to_numpy()):
+                for c_idx, value in enumerate(row):
+                    if isinstance(value, pd.Timestamp):
+                        ws.write_datetime(start_row + i -1, c_idx, value, datetime_format)
+                    else:
+                        ws.write(start_row + i -1, c_idx, value, data_format)
+            
             try:
-                # Hide the run_group column before proceeding
-                run_group_col_index = df_run.columns.get_loc('run_group')
-                ws.set_column(run_group_col_index, run_group_col_index, None, None, {'hidden': True})
-                
+                shot_time_col = chr(ord('A') + df_run.columns.get_loc('SHOT TIME'))
+                actual_ct_col = chr(ord('A') + df_run.columns.get_loc('ACTUAL CT'))
                 time_diff_col = chr(ord('A') + df_run.columns.get_loc('TIME DIFF SEC'))
                 stop_col = chr(ord('A') + df_run.columns.get_loc('STOP'))
                 stop_event_col = chr(ord('A') + df_run.columns.get_loc('STOP EVENT'))
@@ -218,36 +204,42 @@ def generate_excel_report(all_runs_data):
                 st.error("A required column for formula generation is missing. Report will be incomplete.")
                 continue
 
-            helper_col = 'P' # Use a column far to the right
+            helper_col = 'P' # Use a column far to the right for helper calculations
             ws.set_column(f'{helper_col}:{helper_col}', None, None, {'hidden': True})
 
-            for i, row in enumerate(df_run.itertuples(index=False)):
+            for i in range(len(df_run)):
                 row_num = start_row + i
-                row_format = get_row_format(row.total_run_duration)
                 
-                # Write all row data with the determined format
-                for c_idx, value in enumerate(row):
-                    col_name = df_run.columns[c_idx]
-                    if col_name == 'SHOT TIME':
-                        ws.write_datetime(row_num - 1, c_idx, value, color_formats['datetime'])
-                    else:
-                        ws.write(row_num - 1, c_idx, value, row_format)
-                
-                # --- Overwrite specific cells with formulas, applying the same format ---
+                # --- Overwrite specific cells with formulas ---
+                # TIME DIFF SEC FORMULA
+                if i > 0:
+                    prev_row = row_num - 1
+                    time_diff_formula = f'=({shot_time_col}{row_num}-{shot_time_col}{prev_row})*86400'
+                    stop_condition_formula = f'OR({actual_ct_col}{prev_row}=999.9, {time_diff_formula}>({actual_ct_col}{prev_row}+2))'
+                    
+                    final_formula = f'=IF({stop_condition_formula}, {time_diff_formula}, {actual_ct_col}{row_num})'
+                    ws.write_formula(f'{time_diff_col}{row_num}', final_formula, data_format)
+                else: # First row case
+                    ws.write_formula(f'{time_diff_col}{row_num}', f'={actual_ct_col}{row_num}', data_format)
+
+                # Helper column for resetting run duration sum
                 if i == 0:
                     helper_formula = f'={time_diff_col}{row_num}'
                 else:
                     helper_formula = f'=IF({stop_event_col}{row_num}=1, {time_diff_col}{row_num}, {helper_col}{row_num - 1} + {time_diff_col}{row_num})'
                 ws.write_formula(f'{helper_col}{row_num}', helper_formula)
 
+                # CUMULATIVE COUNT
                 cum_count_formula = f'=COUNTIF(${stop_event_col}$19:${stop_event_col}{row_num},1) & "/" & IF({stop_event_col}{row_num}=1, "0 sec", TEXT({helper_col}{row_num}/86400, "[h]:mm:ss"))'
-                ws.write_formula(f'{cum_count_col}{row_num}', cum_count_formula, row_format)
+                ws.write_formula(f'{cum_count_col}{row_num}', cum_count_formula, data_format)
 
+                # RUN DURATION
                 run_dur_formula = f'=IF({stop_event_col}{row_num}=1, {helper_col}{row_num-1}/86400, "")'
                 ws.write_formula(f'{run_dur_col}{row_num}', run_dur_formula, time_format)
 
+                # TIME BUCKET
                 time_bucket_formula = f'=IF({stop_event_col}{row_num}=1, IFERROR(FLOOR({helper_col}{row_num-1}/60/20, 1) + 1, ""), "")'
-                ws.write_formula(f'{bucket_col}{row_num}', time_bucket_formula, row_format)
+                ws.write_formula(f'{bucket_col}{row_num}', time_bucket_formula, data_format)
 
             for i, col_name in enumerate(df_run.columns):
                 width = max(len(str(col_name)), df_run[col_name].astype(str).map(len).max())
@@ -286,7 +278,6 @@ if uploaded_file:
                     df_processed['run_id'] = is_new_run.cumsum()
 
                     all_runs_data = {}
-                    # --- FIX: Added 'run_group' to keep it for color mapping ---
                     desired_columns = [
                         'SUPPLIER NAME', 'tool_id', 'SESSION ID', 'SHOT ID', 'shot_time',
                         'APPROVED CT', 'ACTUAL CT', 'CT MIN', 'ct_diff_sec', 'stop_flag', 'stop_event',
