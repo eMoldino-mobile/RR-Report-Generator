@@ -134,6 +134,9 @@ def generate_excel_report(all_runs_data):
         }
         
         def get_row_format(duration_min):
+            # --- FIX: Handle non-numeric types to prevent TypeError ---
+            if not isinstance(duration_min, (int, float)):
+                return color_formats['default']
             if pd.isna(duration_min): return color_formats['default']
             if duration_min < 40: return color_formats['red1']
             if duration_min < 60: return color_formats['red2']
