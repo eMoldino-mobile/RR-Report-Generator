@@ -151,7 +151,7 @@ def generate_excel_report(all_runs_data, tolerance):
             
             ws.write('K4', 'Efficiency', label_format); ws.write('L4', 'Stop Events', label_format)
             ws.write_formula('K5', f"=L2/K2", percent_format)
-            ws.write_formula('L5', f"=SUM(K:K)", sub_header_format) # Count stop events from column
+            ws.write_formula('L5', f"=SUM(K:K)", sub_header_format)
 
             ws.write('F5', 'Tot Run Time', label_format); ws.write('G5', 'Tot Down Time', label_format)
             ws.write('F6', data['production_run_sec'] / 86400, time_format)
@@ -177,7 +177,6 @@ def generate_excel_report(all_runs_data, tolerance):
             ws.write(f'Q{16+max_bucket}', 'Grand Total', sub_header_format)
             ws.write_formula(f'R{16+max_bucket}', f"=SUM(R16:R{15+max_bucket})", sub_header_format)
 
-
             # --- Data Table ---
             ws.write_row('A18', df_run.columns, header_format)
             start_row = 19
@@ -186,7 +185,7 @@ def generate_excel_report(all_runs_data, tolerance):
                 df_run['SHOT TIME'] = pd.to_datetime(df_run['SHOT TIME']).dt.tz_localize(None)
             df_run.fillna('', inplace=True)
             
-            # Write only the non-formula data
+            # Write only the raw data columns, leave formula columns blank
             for i, row in enumerate(df_run.to_numpy()):
                 for c_idx, value in enumerate(row):
                     if df_run.columns[c_idx] not in ['TIME DIFF SEC', 'STOP', 'STOP EVENT', 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
@@ -215,6 +214,7 @@ def generate_excel_report(all_runs_data, tolerance):
                 row_num = start_row + i
                 prev_row = row_num - 1
                 
+                # --- Overwrite specific cells with formulas ---
                 # TIME DIFF SEC FORMULA
                 if i > 0:
                     time_diff_formula = f'({shot_time_col}{row_num}-{shot_time_col}{prev_row})*86400'
@@ -237,9 +237,9 @@ def generate_excel_report(all_runs_data, tolerance):
                 
                 # Helper column for run duration sum
                 if i == 0:
-                    helper_formula = f'={time_diff_col}{row_num}'
+                    helper_formula = f'=IF({stop_col}{row_num}=0, {time_diff_col}{row_num}, 0)'
                 else:
-                    helper_formula = f'=IF({stop_event_col}{row_num}=1, {time_diff_col}{row_num}, {helper_col}{prev_row} + {time_diff_col}{row_num})'
+                    helper_formula = f'=IF({stop_event_col}{row_num}=1, 0, {helper_col}{prev_row}) + IF({stop_col}{row_num}=0, {time_diff_col}{row_num}, 0)'
                 ws.write_formula(f'{helper_col}{row_num}', helper_formula)
 
                 # CUMULATIVE COUNT
@@ -295,8 +295,8 @@ if uploaded_file:
                     all_runs_data = {}
                     desired_columns = [
                         'SUPPLIER NAME', 'tool_id', 'SESSION ID', 'SHOT ID', 'shot_time',
-                        'APPROVED CT', 'ACTUAL CT', 'CT MIN', 'ct_diff_sec', 'stop_flag', 'stop_event',
-                        'run_group', 
+                        'APPROVED CT', 'ACTUAL CT', 'CT MIN', 
+                        'TIME DIFF SEC', 'STOP', 'STOP EVENT', 'run_group',
                         'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET'
                     ]
 
@@ -309,7 +309,7 @@ if uploaded_file:
                         run_results['end_time'] = df_run['shot_time'].max()
 
                         export_df = run_results['processed_df'].copy()
-                        for col in ['CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
+                        for col in ['TIME DIFF SEC', 'STOP', 'STOP EVENT', 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
                             export_df[col] = ''
                         
                         columns_to_export = [col for col in desired_columns if col in export_df.columns]
