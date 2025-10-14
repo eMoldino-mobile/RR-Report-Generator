@@ -107,7 +107,7 @@ class RunRateCalculator:
         }
 
 # --- Excel Generation Function ---
-def generate_excel_report(all_runs_data):
+def generate_excel_report(all_runs_data, tolerance):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
@@ -135,9 +135,16 @@ def generate_excel_report(all_runs_data):
             ws.write('A3', 'Method', label_format)
             ws.write('B3', 'Every Shot')
 
+            # --- Summary with Mode CT ---
+            ws.write('E1', 'Mode CT', sub_header_format)
+            ws.write('E2', data['mode_ct'], secs_format)
+
             ws.write('F1', 'Outside L1', sub_header_format); ws.write('G1', 'Outside L2', sub_header_format); ws.write('H1', 'IDLE', sub_header_format)
             ws.write('F2', 'Lower Limit', label_format); ws.write('G2', 'Upper Limit', label_format); ws.write('H2', 'Stops', label_format)
-            ws.write('F3', data['lower_limit'], secs_format); ws.write('G3', data['upper_limit'], secs_format)
+            
+            # Link Lower/Upper limits to Mode CT cell
+            ws.write_formula('F3', f'=E2*(1-{tolerance})', secs_format)
+            ws.write_formula('G3', f'=E2*(1+{tolerance})', secs_format)
             ws.write_formula('H3', f"=SUM(J:J)", sub_header_format)
 
             ws.write('K1', 'Total Shot Count', label_format); ws.write('L1', 'Normal Shot Count', label_format)
@@ -307,7 +314,7 @@ if uploaded_file:
                         })
                         all_runs_data[run_id] = run_results
                     
-                    excel_data = generate_excel_report(all_runs_data)
+                    excel_data = generate_excel_report(all_runs_data, tolerance)
                     st.success("✅ Report generated successfully!")
                     st.download_button(
                         label="📥 Download Excel Report",
