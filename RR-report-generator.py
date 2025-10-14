@@ -185,14 +185,16 @@ def generate_excel_report(all_runs_data, tolerance):
                 df_run['SHOT TIME'] = pd.to_datetime(df_run['SHOT TIME']).dt.tz_localize(None)
             df_run.fillna('', inplace=True)
             
-            # Write only the pre-calculated and raw data. Leave formula columns blank.
+            # Write the entire DataFrame first, including the correctly pre-calculated TIME DIFF SEC
             for i, row in enumerate(df_run.to_numpy()):
                 for c_idx, value in enumerate(row):
-                    if df_run.columns[c_idx] not in ['STOP', 'STOP EVENT', 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
-                        if isinstance(value, pd.Timestamp):
-                            ws.write_datetime(start_row + i - 1, c_idx, value, datetime_format)
-                        else:
-                             ws.write(start_row + i - 1, c_idx, value, data_format)
+                    # Leave formula columns blank for now
+                    if df_run.columns[c_idx] in ['STOP', 'STOP EVENT', 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
+                        continue
+                    if isinstance(value, pd.Timestamp):
+                        ws.write_datetime(start_row + i - 1, c_idx, value, datetime_format)
+                    else:
+                         ws.write(start_row + i - 1, c_idx, value, data_format)
             
             try:
                 time_diff_col = chr(ord('A') + df_run.columns.get_loc('TIME DIFF SEC'))
@@ -212,7 +214,8 @@ def generate_excel_report(all_runs_data, tolerance):
                 row_num = start_row + i
                 prev_row = row_num - 1
                 
-                # --- All Analytical Columns are now FORMULAS ---
+                # --- All Analytical Columns are now FORMULAS that depend on the pre-calculated TIME DIFF SEC ---
+                
                 # STOP FORMULA
                 stop_formula = f'=IF(AND({time_diff_col}{row_num}<=28800, OR({time_diff_col}{row_num}<$F$3, {time_diff_col}{row_num}>$G$3)), 1, 0)'
                 ws.write_formula(f'{stop_col}{row_num}', stop_formula, data_format)
