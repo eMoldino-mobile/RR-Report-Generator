@@ -169,7 +169,6 @@ def generate_excel_report(all_runs_data):
             for i in range(1, max_bucket + 1):
                 ws.write(f'P{15+i}', i, sub_header_format)
                 ws.write(f'Q{15+i}', f"{(i-1)*20} - {i*20} min", sub_header_format)
-                # Formula to count occurrences of this bucket number in the main table
                 ws.write_formula(f'R{15+i}', f'=COUNTIF(N:N,{i})', sub_header_format)
             ws.write(f'Q{16+max_bucket}', 'Grand Total', sub_header_format)
             ws.write_formula(f'R{16+max_bucket}', f"=SUM(R16:R{15+max_bucket})", sub_header_format)
@@ -183,9 +182,12 @@ def generate_excel_report(all_runs_data):
                 df_run['SHOT TIME'] = pd.to_datetime(df_run['SHOT TIME']).dt.tz_localize(None)
             df_run.fillna('', inplace=True)
             
-            # Write static data first
+            # Write static data first (values that don't need formulas)
             for i, row in enumerate(df_run.to_numpy()):
                 for c_idx, value in enumerate(row):
+                    # Skip columns that will get a formula
+                    if df_run.columns[c_idx] in ['TIME DIFF SEC', 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
+                        continue
                     if isinstance(value, pd.Timestamp):
                         ws.write_datetime(start_row + i -1, c_idx, value, datetime_format)
                     else:
@@ -214,7 +216,7 @@ def generate_excel_report(all_runs_data):
                 # TIME DIFF SEC FORMULA
                 if i > 0:
                     prev_row = row_num - 1
-                    time_diff_formula = f'=({shot_time_col}{row_num}-{shot_time_col}{prev_row})*86400'
+                    time_diff_formula = f'({shot_time_col}{row_num}-{shot_time_col}{prev_row})*86400'
                     stop_condition_formula = f'OR({actual_ct_col}{prev_row}=999.9, {time_diff_formula}>({actual_ct_col}{prev_row}+2))'
                     
                     final_formula = f'=IF({stop_condition_formula}, {time_diff_formula}, {actual_ct_col}{row_num})'
@@ -226,7 +228,7 @@ def generate_excel_report(all_runs_data):
                 if i == 0:
                     helper_formula = f'={time_diff_col}{row_num}'
                 else:
-                    helper_formula = f'=IF({stop_event_col}{row_num}=1, {time_diff_col}{row_num}, {helper_col}{row_num - 1} + {time_diff_col}{row_num})'
+                    helper_formula = f'=IF({stop_event_col}{row_num}=1, 0, {helper_col}{row_num - 1}) + {time_diff_col}{row_num}'
                 ws.write_formula(f'{helper_col}{row_num}', helper_formula)
 
                 # CUMULATIVE COUNT
