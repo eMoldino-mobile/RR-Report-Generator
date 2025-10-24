@@ -154,18 +154,21 @@ def generate_excel_report(all_runs_data, tolerance):
             # --- Dynamically find column letters ---
             col_map = {name: chr(ord('A') + i) for i, name in enumerate(df_run.columns)}
             
+            # Columns for Table Formulas
+            shot_time_col_dyn = col_map.get('SHOT TIME') # <-- Get SHOT TIME column
+            
             # Columns for Header Formulas
             stop_col = col_map.get('STOP')
             stop_event_col = col_map.get('STOP EVENT')
             time_bucket_col = col_map.get('TIME BUCKET')
-            first_col = 'A' # Always use the first column for counting total shots
+            # --- FIX: Use SHOT TIME column for count, fall back to 'A' ---
+            first_col_for_count = shot_time_col_dyn if shot_time_col_dyn else 'A' 
             
-            # Columns for Table Formulas
-            time_diff_col_dyn = col_map.get('TIME DIFF SEC')
             cum_count_col_dyn = col_map.get('CUMULATIVE COUNT')
             run_dur_col_dyn = col_map.get('RUN DURATION')
             bucket_col_dyn = col_map.get('TIME BUCKET')
-            shot_time_col_dyn = col_map.get('SHOT TIME') # <-- Get SHOT TIME column
+            time_diff_col_dyn = col_map.get('TIME DIFF SEC')
+
 
             # Helper column will be the one *after* the last data column
             data_cols_count = len(df_run.columns)
@@ -220,7 +223,8 @@ def generate_excel_report(all_runs_data, tolerance):
 
 
             ws.write('K1', 'Total Shot Count', label_format); ws.write('L1', 'Normal Shot Count', label_format)
-            ws.write_formula('K2', f"=COUNTA({first_col}{start_row}:{first_col}{start_row + len(df_run) - 1})", sub_header_format)
+            # --- FIX: Use first_col_for_count (SHOT TIME col) ---
+            ws.write_formula('K2', f"=COUNTA({first_col_for_count}{start_row}:{first_col_for_count}{start_row + len(df_run) - 1})", sub_header_format)
             ws.write_formula('L2', f"=K2-H3", sub_header_format)
             
             ws.write('K4', 'Efficiency', label_format); ws.write('L4', 'Stop Events', label_format)
@@ -440,8 +444,9 @@ if uploaded_file:
                                 'time_diff_sec': 'TIME DIFF SEC', 'stop_flag': 'STOP', 'stop_event': 'STOP EVENT'
                             })
 
+                            # --- FIX: Corrected typo SUPLIER -> SUPPLIER ---
                             final_desired_renamed = [
-                                'SUPLIER NAME', 'EQUIPMENT CODE', 'SESSION ID', 'SHOT ID', 'SHOT TIME',
+                                'SUPPLIER NAME', 'EQUIPMENT CODE', 'SESSION ID', 'SHOT ID', 'SHOT TIME',
                                 'APPROVED CT', 'ACTUAL CT', 
                                 'TIME DIFF SEC', 'STOP', 'STOP EVENT', 'run_group',
                                 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET'
