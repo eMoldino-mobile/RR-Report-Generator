@@ -32,32 +32,48 @@ class RunRateCalculator:
         df = df.dropna(subset=["shot_time"]).sort_values("shot_time").reset_index(drop=True)
         if df.empty: return pd.DataFrame()
 
+        # --- LOGIC CHANGE ---
+        # 1. Create the pure timestamp difference column for export
+        df["time_diff_sec"] = df["shot_time"].diff().dt.total_seconds()
+
         if "ACTUAL CT" in df.columns:
-            time_diff_sec = df["shot_time"].diff().dt.total_seconds()
+            # Use the pure time_diff_sec for stop logic comparison
+            time_diff_sec_calc = df["time_diff_sec"] 
             prev_actual_ct = df["ACTUAL CT"].shift(1)
             rounding_buffer = 2.0
             
-            is_a_stop = (prev_actual_ct == 999.9) | (time_diff_sec > (prev_actual_ct + rounding_buffer))
+            is_a_stop = (prev_actual_ct == 999.9) | (time_diff_sec_calc > (prev_actual_ct + rounding_buffer))
             
-            df["ct_diff_sec"] = np.where(is_a_stop, time_diff_sec, df["ACTUAL CT"])
+            # 2. Create a new internal column for stop/run logic
+            df["logic_ct_diff"] = np.where(is_a_stop, time_diff_sec_calc, df["ACTUAL CT"])
         else:
-            df["ct_diff_sec"] = df["shot_time"].diff().dt.total_seconds()
+            # If no 'ACTUAL CT', use the pure timestamp diff for logic
+            df["logic_ct_diff"] = df["time_diff_sec"]
 
-        if not df.empty and pd.isna(df.loc[0, "ct_diff_sec"]):
-            df.loc[0, "ct_diff_sec"] = df.loc[0, "ACTUAL CT"] if "ACTUAL CT" in df.columns else 0
+        # 3. Handle NaNs for both new columns in the first row
+        if not df.empty:
+            if pd.isna(df.loc[0, "time_diff_sec"]):
+                df.loc[0, "time_diff_sec"] = 0 # First shot has no time diff
+            
+            if pd.isna(df.loc[0, "logic_ct_diff"]):
+                # For the first row, logic_ct_diff should be ACTUAL CT if it exists, else 0
+                df.loc[0, "logic_ct_diff"] = df.loc[0, "ACTUAL CT"] if "ACTUAL CT" in df.columns else 0
+                
         return df
+        # --- END LOGIC CHANGE ---
 
     def _calculate_all_metrics(self) -> dict:
         df = self._prepare_data()
         if df.empty or "ACTUAL CT" not in df.columns:
             return {}
 
-        df_for_mode_calc = df[df["ct_diff_sec"] <= 28800]
+        # --- LOGIC CHANGE: Use 'logic_ct_diff' for all calculations ---
+        df_for_mode_calc = df[df["logic_ct_diff"] <= 28800]
         mode_ct = df_for_mode_calc["ACTUAL CT"].mode().iloc[0] if not df_for_mode_calc["ACTUAL CT"].mode().empty else 0
         lower_limit = mode_ct * (1 - self.tolerance)
         upper_limit = mode_ct * (1 + self.tolerance)
 
-        stop_condition = ((df["ct_diff_sec"] < lower_limit) | (df["ct_diff_sec"] > upper_limit)) & (df["ct_diff_sec"] <= 28800)
+        stop_condition = ((df["logic_ct_diff"] < lower_limit) | (df["logic_ct_diff"] > upper_limit)) & (df["logic_ct_diff"] <= 28800)
         df["stop_flag"] = np.where(stop_condition, 1, 0)
         if not df.empty:
             df.loc[0, "stop_flag"] = 0
@@ -65,8 +81,8 @@ class RunRateCalculator:
 
         total_shots = len(df)
         stop_events = df["stop_event"].sum()
-        downtime_sec = df.loc[df['stop_flag'] == 1, 'ct_diff_sec'].sum()
-        production_time_sec = df[df['stop_flag'] == 0]['ct_diff_sec'].sum()
+        downtime_sec = df.loc[df['stop_flag'] == 1, 'logic_ct_diff'].sum()
+        production_time_sec = df[df['stop_flag'] == 0]['logic_ct_diff'].sum()
 
         stop_durations = []
         is_in_stop = False
@@ -74,7 +90,7 @@ class RunRateCalculator:
         for _, row in df.iterrows():
             if row['stop_flag'] == 1:
                 is_in_stop = True
-                current_stop_duration += row['ct_diff_sec']
+                current_stop_duration += row['logic_ct_diff'] # Use logic_ct_diff
             elif is_in_stop and row['stop_flag'] == 0:
                 stop_durations.append(current_stop_duration)
                 is_in_stop = False
@@ -94,11 +110,12 @@ class RunRateCalculator:
         efficiency = normal_shots / total_shots if total_shots > 0 else 0
         
         first_stop_index = df[df['stop_event']].index.min()
-        time_to_first_dt_sec = df.loc[:first_stop_index-1, 'ct_diff_sec'].sum() if pd.notna(first_stop_index) and first_stop_index > 0 else production_time_sec
+        time_to_first_dt_sec = df.loc[:first_stop_index-1, 'logic_ct_diff'].sum() if pd.notna(first_stop_index) and first_stop_index > 0 else production_time_sec
         avg_cycle_time = production_time_sec / normal_shots if normal_shots > 0 else 0
         
         df["run_group"] = df["stop_event"].cumsum()
-        run_durations = df[df["stop_flag"] == 0].groupby("run_group")["ct_diff_sec"].sum().div(60).reset_index(name="duration_min")
+        run_durations = df[df["stop_flag"] == 0].groupby("run_group")["logic_ct_diff"].sum().div(60).reset_index(name="duration_min")
+        # --- END LOGIC CHANGE ---
 
         return {
             "processed_df": df, "mode_ct": mode_ct, "lower_limit": lower_limit, "upper_limit": upper_limit,
@@ -166,7 +183,7 @@ def generate_excel_report(all_runs_data, tolerance):
             if not stop_col: missing_cols.append('STOP')
             if not stop_event_col: missing_cols.append('STOP EVENT')
             if not time_bucket_col: missing_cols.append('TIME BUCKET')
-            if not time_diff_col_dyn: missing_cols.append('TIME DIFF SEC')
+            if not time_diff_col_dyn: missing_cols.append('TIME DIFF SEC') # This now refers to the pure diff column
             if not cum_count_col_dyn: missing_cols.append('CUMULATIVE COUNT')
             if not run_dur_col_dyn: missing_cols.append('RUN DURATION')
             
@@ -272,11 +289,13 @@ def generate_excel_report(all_runs_data, tolerance):
                     prev_row = row_num - 1
                     
                     # Helper column for run duration sum
+                    # --- LOGIC CHANGE: This formula now needs the pure 'TIME DIFF SEC' column ---
                     if i == 0:
                         helper_formula = f'=IF({stop_col}{row_num}=0, {time_diff_col_dyn}{row_num}, 0)'
                     else:
                         helper_formula = f'=IF({stop_event_col}{row_num}=1, 0, {helper_col_letter}{prev_row}) + IF({stop_col}{row_num}=0, {time_diff_col_dyn}{row_num}, 0)'
                     ws.write_formula(f'{helper_col_letter}{row_num}', helper_formula)
+                    # --- END LOGIC CHANGE ---
 
                     # CUMULATIVE COUNT
                     cum_count_formula = f'=COUNTIF(${stop_event_col}${start_row}:${stop_event_col}{row_num},1) & "/" & IF({stop_event_col}{row_num}=1, "0 sec", TEXT({helper_col_letter}{row_num}/86400, "[h]:mm:ss"))'
@@ -346,14 +365,18 @@ if uploaded_file:
                     if df_processed.empty:
                         st.error("Could not process data. Check file format or data. 'ACTUAL CT' column might be missing or all timestamp data might be invalid.")
                     else:
-                        is_new_run = df_processed['ct_diff_sec'] > (run_interval_hours * 3600)
+                        # --- LOGIC CHANGE: Use 'logic_ct_diff' for run splitting ---
+                        # Check if 'logic_ct_diff' exists, otherwise fall back to 'time_diff_sec'
+                        split_col = 'logic_ct_diff' if 'logic_ct_diff' in df_processed.columns else 'time_diff_sec'
+                        is_new_run = df_processed[split_col] > (run_interval_hours * 3600)
                         df_processed['run_id'] = is_new_run.cumsum()
+                        # --- END LOGIC CHANGE ---
 
                         all_runs_data = {}
                         desired_columns_base = [
                             'SUPPLIER NAME', 'tool_id', 'SESSION ID', 'SHOT ID', 'shot_time',
                             'APPROVED CT', 'ACTUAL CT', 'CT MIN', 
-                            'ct_diff_sec', 'stop_flag', 'stop_event', 'run_group'
+                            'time_diff_sec', 'stop_flag', 'stop_event', 'run_group' # <-- Use 'time_diff_sec'
                         ]
                         
                         formula_columns = ['CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']
@@ -386,7 +409,7 @@ if uploaded_file:
                             # Prepare final DF for export with renamed columns
                             final_export_df = export_df[columns_to_export].rename(columns={
                                 'tool_id': 'EQUIPMENT CODE', 'shot_time': 'SHOT TIME',
-                                'ct_diff_sec': 'TIME DIFF SEC', 'stop_flag': 'STOP', 'stop_event': 'STOP EVENT'
+                                'time_diff_sec': 'TIME DIFF SEC', 'stop_flag': 'STOP', 'stop_event': 'STOP EVENT' # <-- Use 'time_diff_sec'
                             })
 
                             # Ensure all desired columns are present, even if empty (for consistent column ordering)
