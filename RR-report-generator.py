@@ -165,6 +165,7 @@ def generate_excel_report(all_runs_data, tolerance):
             cum_count_col_dyn = col_map.get('CUMULATIVE COUNT')
             run_dur_col_dyn = col_map.get('RUN DURATION')
             bucket_col_dyn = col_map.get('TIME BUCKET')
+            shot_time_col_dyn = col_map.get('SHOT TIME') # <-- Get SHOT TIME column
 
             # Helper column will be the one *after* the last data column
             data_cols_count = len(df_run.columns)
@@ -183,16 +184,18 @@ def generate_excel_report(all_runs_data, tolerance):
             if not stop_col: missing_cols.append('STOP')
             if not stop_event_col: missing_cols.append('STOP EVENT')
             if not time_bucket_col: missing_cols.append('TIME BUCKET')
-            if not time_diff_col_dyn: missing_cols.append('TIME DIFF SEC') # This now refers to the pure diff column
+            if not time_diff_col_dyn: missing_cols.append('TIME DIFF SEC')
             if not cum_count_col_dyn: missing_cols.append('CUMULATIVE COUNT')
             if not run_dur_col_dyn: missing_cols.append('RUN DURATION')
+            if not shot_time_col_dyn: missing_cols.append('SHOT TIME') # <-- Add check
             
             if missing_cols:
                 ws.write('A5', f"Error: Missing columns for formulas: {', '.join(missing_cols)}", error_format)
             
             table_formulas_ok = all(item is not None for item in [
                 stop_col, stop_event_col, time_diff_col_dyn, 
-                cum_count_col_dyn, run_dur_col_dyn, bucket_col_dyn
+                cum_count_col_dyn, run_dur_col_dyn, bucket_col_dyn,
+                shot_time_col_dyn # <-- Add to check
             ])
 
             # --- Layout ---
@@ -211,21 +214,18 @@ def generate_excel_report(all_runs_data, tolerance):
             ws.write_formula('F3', f'=E2*(1-{tolerance})', secs_format)
             ws.write_formula('G3', f'=E2*(1+{tolerance})', secs_format)
             if stop_col:
-                # --- FIX 1: Changed from whole column to specific range ---
                 ws.write_formula('H3', f"=SUM({stop_col}{start_row}:{stop_col}{start_row + len(df_run) - 1})", sub_header_format)
             else:
                 ws.write('H3', 'N/A', sub_header_format)
 
 
             ws.write('K1', 'Total Shot Count', label_format); ws.write('L1', 'Normal Shot Count', label_format)
-            # Use first_col for COUNTA. End row is start_row + len - 1.
             ws.write_formula('K2', f"=COUNTA({first_col}{start_row}:{first_col}{start_row + len(df_run) - 1})", sub_header_format)
             ws.write_formula('L2', f"=K2-H3", sub_header_format)
             
             ws.write('K4', 'Efficiency', label_format); ws.write('L4', 'Stop Events', label_format)
             ws.write_formula('K5', f"=L2/K2", percent_format)
             if stop_event_col:
-                # --- FIX 2: Changed from whole column to specific range ---
                 ws.write_formula('L5', f"=SUM({stop_event_col}{start_row}:{stop_event_col}{start_row + len(df_run) - 1})", sub_header_format)
             else:
                 ws.write('L5', 'N/A', sub_header_format)
@@ -272,8 +272,25 @@ def generate_excel_report(all_runs_data, tolerance):
                 for c_idx, value in enumerate(row):
                     col_name = df_run.columns[c_idx]
                     if col_name in ['CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
-                        # Skip placeholder columns; they will be filled by formulas
                         continue 
+                    
+                    # --- FORMULA CHANGE for TIME DIFF SEC ---
+                    if col_name == 'TIME DIFF SEC':
+                        if table_formulas_ok:
+                            if i == 0: # First data row
+                                ws.write_number(current_row_excel_idx - 1, c_idx, 0, secs_format)
+                            else: # Subsequent data rows
+                                current_row_num_excel = current_row_excel_idx # e.g., 19, 20...
+                                prev_row_num_excel = current_row_excel_idx - 1 # e.g., 18, 19...
+                                # Excel row numbers are 1-based, so 19 is correct for first data row
+                                formula = f'=({shot_time_col_dyn}{current_row_num_excel}-{shot_time_col_dyn}{prev_row_num_excel})*86400'
+                                ws.write_formula(current_row_excel_idx - 1, c_idx, formula, secs_format)
+                        else:
+                            # Fallback if columns are missing
+                            ws.write(current_row_excel_idx - 1, c_idx, value, secs_format)
+                        continue # Move to the next cell
+                    # --- END FORMULA CHANGE ---
+                        
                     
                     if isinstance(value, pd.Timestamp):
                         ws.write_datetime(current_row_excel_idx - 1, c_idx, value, datetime_format)
@@ -289,13 +306,13 @@ def generate_excel_report(all_runs_data, tolerance):
                     prev_row = row_num - 1
                     
                     # Helper column for run duration sum
-                    # --- LOGIC CHANGE: This formula now needs the pure 'TIME DIFF SEC' column ---
+                    # This formula now correctly references the 'TIME DIFF SEC' column
+                    # which itself contains a formula. Excel handles this dependency.
                     if i == 0:
                         helper_formula = f'=IF({stop_col}{row_num}=0, {time_diff_col_dyn}{row_num}, 0)'
                     else:
                         helper_formula = f'=IF({stop_event_col}{row_num}=1, 0, {helper_col_letter}{prev_row}) + IF({stop_col}{row_num}=0, {time_diff_col_dyn}{row_num}, 0)'
                     ws.write_formula(f'{helper_col_letter}{row_num}', helper_formula)
-                    # --- END LOGIC CHANGE ---
 
                     # CUMULATIVE COUNT
                     cum_count_formula = f'=COUNTIF(${stop_event_col}${start_row}:${stop_event_col}{row_num},1) & "/" & IF({stop_event_col}{row_num}=1, "0 sec", TEXT({helper_col_letter}{row_num}/86400, "[h]:mm:ss"))'
@@ -311,14 +328,12 @@ def generate_excel_report(all_runs_data, tolerance):
                         time_bucket_formula = f'=IF({stop_event_col}{row_num}=1, IFERROR(FLOOR({helper_col_letter}{prev_row}/60/20, 1) + 1, ""), "")'
                         ws.write_formula(f'{bucket_col_dyn}{row_num}', time_bucket_formula, data_format)
             else:
-                # Write error message in the first formula column if formulas can't be written
                 if cum_count_col_dyn:
                     ws.write(f'{cum_count_col_dyn}{start_row-1}', "Formula Error", error_format)
 
 
             # Auto-fit columns
             for i, col_name in enumerate(df_run.columns):
-                # Calculate max width
                 try:
                     width = max(
                         len(str(col_name)), 
@@ -327,7 +342,6 @@ def generate_excel_report(all_runs_data, tolerance):
                 except Exception:
                     width = len(str(col_name)) # Fallback
                 
-                # Apply a reasonable cap to width
                 ws.set_column(i, i, width + 2 if width < 40 else 40)
 
     return output.getvalue()
@@ -365,26 +379,20 @@ if uploaded_file:
                     if df_processed.empty:
                         st.error("Could not process data. Check file format or data. 'ACTUAL CT' column might be missing or all timestamp data might be invalid.")
                     else:
-                        # --- LOGIC CHANGE: Use 'logic_ct_diff' for run splitting ---
-                        # Check if 'logic_ct_diff' exists, otherwise fall back to 'time_diff_sec'
                         split_col = 'logic_ct_diff' if 'logic_ct_diff' in df_processed.columns else 'time_diff_sec'
                         is_new_run = df_processed[split_col] > (run_interval_hours * 3600)
                         df_processed['run_id'] = is_new_run.cumsum()
-                        # --- END LOGIC CHANGE ---
 
                         all_runs_data = {}
-                        # --- FIX: Removed 'CT MIN' ---
                         desired_columns_base = [
                             'SUPPLIER NAME', 'tool_id', 'SESSION ID', 'SHOT ID', 'shot_time',
                             'APPROVED CT', 'ACTUAL CT', 
-                            'time_diff_sec', 'stop_flag', 'stop_event', 'run_group' # <-- Use 'time_diff_sec'
+                            'time_diff_sec', 'stop_flag', 'stop_event', 'run_group'
                         ]
-                        # --- END FIX ---
                         
                         formula_columns = ['CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']
 
                         for run_id, df_run_raw in df_processed.groupby('run_id'):
-                            # Recalculate metrics for each *specific* run
                             run_calculator = RunRateCalculator(df_run_raw.copy(), tolerance)
                             run_results = run_calculator.results
                             
@@ -398,37 +406,29 @@ if uploaded_file:
 
                             export_df = run_results['processed_df'].copy()
                             
-                            # Add placeholder columns for formulas
                             for col in formula_columns:
                                 if col not in export_df:
                                     export_df[col] = ''
                             
-                            # Filter *existing* columns against the desired list
                             columns_to_export = [col for col in desired_columns_base if col in export_df.columns]
-                            # Add formula columns to the end
                             columns_to_export.extend(formula_columns)
                             
-                            # Prepare final DF for export with renamed columns
                             final_export_df = export_df[columns_to_export].rename(columns={
                                 'tool_id': 'EQUIPMENT CODE', 'shot_time': 'SHOT TIME',
-                                'time_diff_sec': 'TIME DIFF SEC', 'stop_flag': 'STOP', 'stop_event': 'STOP EVENT' # <-- Use 'time_diff_sec'
+                                'time_diff_sec': 'TIME DIFF SEC', 'stop_flag': 'STOP', 'stop_event': 'STOP EVENT'
                             })
 
-                            # --- FIX: Removed 'CT MIN' ---
                             final_desired_renamed = [
                                 'SUPPLIER NAME', 'EQUIPMENT CODE', 'SESSION ID', 'SHOT ID', 'SHOT TIME',
                                 'APPROVED CT', 'ACTUAL CT', 
                                 'TIME DIFF SEC', 'STOP', 'STOP EVENT', 'run_group',
                                 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET'
                             ]
-                            # --- END FIX ---
                             
                             for col in final_desired_renamed:
                                 if col not in final_export_df.columns:
-                                    # This handles columns that were in desired_columns but not in the original file
                                     final_export_df[col] = ''
                             
-                            # Re-order to match desired list and filter out any extras
                             final_export_df = final_export_df[[col for col in final_desired_renamed if col in final_export_df.columns]]
 
                             run_results['processed_df'] = final_export_df
