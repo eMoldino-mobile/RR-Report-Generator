@@ -150,8 +150,16 @@ def generate_excel_report(all_runs_data, tolerance):
             bucket_col_dyn = col_map.get('TIME BUCKET')
 
             # Helper column will be the one *after* the last data column
-            helper_col_letter = chr(ord('A') + len(df_run.columns))
+            data_cols_count = len(df_run.columns)
+            helper_col_letter = chr(ord('A') + data_cols_count)
             ws.set_column(f'{helper_col_letter}:{helper_col_letter}', None, None, {'hidden': True})
+            
+            # --- Define Analysis Block Columns ---
+            # Start 2 columns after the helper column (leaves one blank column)
+            analysis_start_col_idx = data_cols_count + 2 
+            analysis_col_1 = chr(ord('A') + analysis_start_col_idx)     # Bucket #
+            analysis_col_2 = chr(ord('A') + analysis_start_col_idx + 1) # Duration Range
+            analysis_col_3 = chr(ord('A') + analysis_start_col_idx + 2) # Events Count
 
             # Check for missing essential columns
             missing_cols = []
@@ -214,21 +222,23 @@ def generate_excel_report(all_runs_data, tolerance):
             ws.write('K11', 'Time to First DT', label_format); ws.write('L11', data['time_to_first_dt_min'], mins_format)
             ws.write('K12', 'Avg Cycle Time', label_format); ws.write('L12', data['avg_cycle_time_sec'], secs_format)
 
-            ws.merge_range('P14:R14', 'Time Bucket Analysis', header_format)
-            ws.write('P15', 'Bucket', sub_header_format)
-            ws.write('Q15', 'Duration Range', sub_header_format)
-            ws.write('R15', 'Events Count', sub_header_format)
+            # --- Time Bucket Analysis (Dynamically Placed) ---
+            ws.merge_range(f'{analysis_col_1}14:{analysis_col_3}14', 'Time Bucket Analysis', header_format)
+            ws.write(f'{analysis_col_1}15', 'Bucket', sub_header_format)
+            ws.write(f'{analysis_col_2}15', 'Duration Range', sub_header_format)
+            ws.write(f'{analysis_col_3}15', 'Events Count', sub_header_format)
             
             max_bucket = 20
             for i in range(1, max_bucket + 1):
-                ws.write(f'P{15+i}', i, sub_header_format)
-                ws.write(f'Q{15+i}', f"{(i-1)*20} - {i*20} min", sub_header_format)
+                ws.write(f'{analysis_col_1}{15+i}', i, sub_header_format)
+                ws.write(f'{analysis_col_2}{15+i}', f"{(i-1)*20} - {i*20} min", sub_header_format)
                 if time_bucket_col:
-                    ws.write_formula(f'R{15+i}', f'=COUNTIF({time_bucket_col}:{time_bucket_col},{i})', sub_header_format)
+                    ws.write_formula(f'{analysis_col_3}{15+i}', f'=COUNTIF({time_bucket_col}:{time_bucket_col},{i})', sub_header_format)
                 else:
-                    ws.write(f'R{15+i}', 'N/A', sub_header_format)
-            ws.write(f'Q{16+max_bucket}', 'Grand Total', sub_header_format)
-            ws.write_formula(f'R{16+max_bucket}', f"=SUM(R16:R{15+max_bucket})", sub_header_format)
+                    ws.write(f'{analysis_col_3}{15+i}', 'N/A', sub_header_format)
+
+            ws.write(f'{analysis_col_2}{16+max_bucket}', 'Grand Total', sub_header_format)
+            ws.write_formula(f'{analysis_col_3}{16+max_bucket}', f"=SUM({analysis_col_3}16:{analysis_col_3}{15+max_bucket})", sub_header_format)
 
             # --- Data Table ---
             ws.write_row('A18', df_run.columns, header_format)
@@ -282,16 +292,20 @@ def generate_excel_report(all_runs_data, tolerance):
             else:
                 # Write error message in the first formula column if formulas can't be written
                 if cum_count_col_dyn:
-                    ws.write(f'{cum_count_col_dyn}{start_row}', "Formula Error", error_format)
+                    ws.write(f'{cum_count_col_dyn}{start_row-1}', "Formula Error", error_format)
 
 
             # Auto-fit columns
             for i, col_name in enumerate(df_run.columns):
                 # Calculate max width
-                width = max(
-                    len(str(col_name)), 
-                    df_run[col_name].astype(str).map(len).max()
-                )
+                try:
+                    width = max(
+                        len(str(col_name)), 
+                        df_run[col_name].astype(str).map(len).max()
+                    )
+                except Exception:
+                    width = len(str(col_name)) # Fallback
+                
                 # Apply a reasonable cap to width
                 ws.set_column(i, i, width + 2 if width < 40 else 40)
 
@@ -334,12 +348,13 @@ if uploaded_file:
                         df_processed['run_id'] = is_new_run.cumsum()
 
                         all_runs_data = {}
-                        desired_columns = [
+                        desired_columns_base = [
                             'SUPPLIER NAME', 'tool_id', 'SESSION ID', 'SHOT ID', 'shot_time',
                             'APPROVED CT', 'ACTUAL CT', 'CT MIN', 
-                            'ct_diff_sec', 'stop_flag', 'stop_event', 'run_group',
-                            'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET'
+                            'ct_diff_sec', 'stop_flag', 'stop_event', 'run_group'
                         ]
+                        
+                        formula_columns = ['CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']
 
                         for run_id, df_run_raw in df_processed.groupby('run_id'):
                             # Recalculate metrics for each *specific* run
@@ -355,13 +370,16 @@ if uploaded_file:
                             run_results['end_time'] = df_run_raw['shot_time'].max()
 
                             export_df = run_results['processed_df'].copy()
+                            
                             # Add placeholder columns for formulas
-                            for col in ['CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
+                            for col in formula_columns:
                                 if col not in export_df:
                                     export_df[col] = ''
                             
                             # Filter *existing* columns against the desired list
-                            columns_to_export = [col for col in desired_columns if col in export_df.columns]
+                            columns_to_export = [col for col in desired_columns_base if col in export_df.columns]
+                            # Add formula columns to the end
+                            columns_to_export.extend(formula_columns)
                             
                             # Prepare final DF for export with renamed columns
                             final_export_df = export_df[columns_to_export].rename(columns={
@@ -407,3 +425,4 @@ if uploaded_file:
 
 else:
     st.info("Upload an Excel file to begin.")
+
