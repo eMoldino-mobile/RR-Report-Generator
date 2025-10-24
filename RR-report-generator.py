@@ -194,7 +194,8 @@ def generate_excel_report(all_runs_data, tolerance):
             ws.write_formula('F3', f'=E2*(1-{tolerance})', secs_format)
             ws.write_formula('G3', f'=E2*(1+{tolerance})', secs_format)
             if stop_col:
-                ws.write_formula('H3', f"=SUM({stop_col}:{stop_col})", sub_header_format)
+                # --- FIX 1: Changed from whole column to specific range ---
+                ws.write_formula('H3', f"=SUM({stop_col}{start_row}:{stop_col}{start_row + len(df_run) - 1})", sub_header_format)
             else:
                 ws.write('H3', 'N/A', sub_header_format)
 
@@ -207,7 +208,8 @@ def generate_excel_report(all_runs_data, tolerance):
             ws.write('K4', 'Efficiency', label_format); ws.write('L4', 'Stop Events', label_format)
             ws.write_formula('K5', f"=L2/K2", percent_format)
             if stop_event_col:
-                ws.write_formula('L5', f"=SUM({stop_event_col}:{stop_event_col})", sub_header_format)
+                # --- FIX 2: Changed from whole column to specific range ---
+                ws.write_formula('L5', f"=SUM({stop_event_col}{start_row}:{stop_event_col}{start_row + len(df_run) - 1})", sub_header_format)
             else:
                 ws.write('L5', 'N/A', sub_header_format)
 
