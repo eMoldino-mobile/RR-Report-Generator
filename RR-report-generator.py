@@ -334,15 +334,21 @@ def generate_excel_report(all_runs_data, tolerance):
                     cum_count_formula = f'=COUNTIF(${stop_event_col}${start_row}:${stop_event_col}{row_num},1) & "/" & IF({stop_event_col}{row_num}=1, "0 sec", TEXT({helper_col_letter}{row_num}/86400, "[h]:mm:ss"))'
                     ws.write_formula(f'{cum_count_col_dyn}{row_num}', cum_count_formula, data_format)
 
+                    # --- FIX: Allow RUN DURATION and TIME BUCKET on first row ---
                     # RUN DURATION
-                    if i > 0:
+                    if i == 0:
+                        run_dur_formula = f'=IF({stop_event_col}{row_num}=1, 0, "")' # Special case for first row: duration is 0
+                    else:
                         run_dur_formula = f'=IF({stop_event_col}{row_num}=1, {helper_col_letter}{prev_row}/86400, "")'
-                        ws.write_formula(f'{run_dur_col_dyn}{row_num}', run_dur_formula, time_format)
+                    ws.write_formula(f'{run_dur_col_dyn}{row_num}', run_dur_formula, time_format)
 
                     # TIME BUCKET
-                    if i > 0:
+                    if i == 0:
+                         time_bucket_formula = f'=IF({stop_event_col}{row_num}=1, IFERROR(FLOOR(0/60/20, 1) + 1, ""), "")' # Special case for first row
+                    else:
                         time_bucket_formula = f'=IF({stop_event_col}{row_num}=1, IFERROR(FLOOR({helper_col_letter}{prev_row}/60/20, 1) + 1, ""), "")'
-                        ws.write_formula(f'{bucket_col_dyn}{row_num}', time_bucket_formula, data_format)
+                    ws.write_formula(f'{bucket_col_dyn}{row_num}', time_bucket_formula, data_format)
+                    # --- END FIX ---
             else:
                 if cum_count_col_dyn:
                     ws.write(f'{cum_count_col_dyn}{start_row-1}', "Formula Error", error_format)
@@ -435,7 +441,7 @@ if uploaded_file:
                             })
 
                             final_desired_renamed = [
-                                'SUPPLIER NAME', 'EQUIPMENT CODE', 'SESSION ID', 'SHOT ID', 'SHOT TIME',
+                                'SUPLIER NAME', 'EQUIPMENT CODE', 'SESSION ID', 'SHOT ID', 'SHOT TIME',
                                 'APPROVED CT', 'ACTUAL CT', 
                                 'TIME DIFF SEC', 'STOP', 'STOP EVENT', 'run_group',
                                 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET'
