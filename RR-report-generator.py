@@ -238,7 +238,23 @@ def generate_excel_report(all_runs_data, tolerance):
             ws.merge_range('K8:L8', 'Reliability Metrics', header_format)
             ws.write('K9', 'MTTR (Avg)', label_format); ws.write('L9', data['mttr_min'], mins_format)
             ws.write('K10', 'MTBF (Avg)', label_format); ws.write('L10', data['mtbf_min'], mins_format)
-            ws.write('K11', 'Time to First DT', label_format); ws.write('L11', data['time_to_first_dt_min'], mins_format)
+            
+            ws.write('K11', 'Time to First DT', label_format)
+            # --- FORMULA CHANGE for Time to First DT ---
+            if stop_event_col and run_dur_col_dyn:
+                end_row_num = start_row + len(df_run) - 1
+                match_range = f'{stop_event_col}{start_row}:{stop_event_col}{end_row_num}'
+                index_range = f'{run_dur_col_dyn}:{run_dur_col_dyn}'
+                # Find the first row with stop_event=1, get its row number, then INDEX into the RUN DURATION column
+                # (18 + MATCH(...)) gives the absolute row number.
+                # IFERROR handles the case of no stops, falling back to the pre-calculated total run time.
+                formula = f'IFERROR(INDEX({index_range}, 18 + MATCH(1, {match_range}, 0)) * 1440, {data["time_to_first_dt_min"]})'
+                ws.write_formula('L11', formula, mins_format)
+            else:
+                # Fallback to static value if columns are missing
+                ws.write('L11', data['time_to_first_dt_min'], mins_format) 
+            # --- END FORMULA CHANGE ---
+            
             ws.write('K12', 'Avg Cycle Time', label_format); ws.write('L12', data['avg_cycle_time_sec'], secs_format)
 
             # --- Time Bucket Analysis (Dynamically Placed) ---
