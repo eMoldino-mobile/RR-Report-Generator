@@ -373,11 +373,13 @@ if uploaded_file:
                         # --- END LOGIC CHANGE ---
 
                         all_runs_data = {}
+                        # --- FIX: Removed 'CT MIN' ---
                         desired_columns_base = [
                             'SUPPLIER NAME', 'tool_id', 'SESSION ID', 'SHOT ID', 'shot_time',
-                            'APPROVED CT', 'ACTUAL CT', 'CT MIN', 
+                            'APPROVED CT', 'ACTUAL CT', 
                             'time_diff_sec', 'stop_flag', 'stop_event', 'run_group' # <-- Use 'time_diff_sec'
                         ]
+                        # --- END FIX ---
                         
                         formula_columns = ['CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']
 
@@ -412,13 +414,14 @@ if uploaded_file:
                                 'time_diff_sec': 'TIME DIFF SEC', 'stop_flag': 'STOP', 'stop_event': 'STOP EVENT' # <-- Use 'time_diff_sec'
                             })
 
-                            # Ensure all desired columns are present, even if empty (for consistent column ordering)
+                            # --- FIX: Removed 'CT MIN' ---
                             final_desired_renamed = [
                                 'SUPPLIER NAME', 'EQUIPMENT CODE', 'SESSION ID', 'SHOT ID', 'SHOT TIME',
-                                'APPROVED CT', 'ACTUAL CT', 'CT MIN', 
+                                'APPROVED CT', 'ACTUAL CT', 
                                 'TIME DIFF SEC', 'STOP', 'STOP EVENT', 'run_group',
                                 'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET'
                             ]
+                            # --- END FIX ---
                             
                             for col in final_desired_renamed:
                                 if col not in final_export_df.columns:
